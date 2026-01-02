@@ -12,9 +12,19 @@ const CORS_HEADERS = {
 export async function GET(request: Request) {
   try {
     const urlParams = new URL(request.url).searchParams;
-    const dateParam = urlParams.get("date") || new Date().toISOString().slice(0,10); // YYYY-MM-DD
+    const dateParam = urlParams.get("date");
+    const lang = (urlParams.get("lang") || "en").toLowerCase();
 
-    const url = `https://www.drikpanchang.com/panchang/day-panchang.html?date=${dateParam}`;
+    // Format date as DD/MM/YYYY
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2,'0');
+    const mm = String(today.getMonth()+1).padStart(2,'0');
+    const yyyy = today.getFullYear();
+    const dateStr = dateParam || `${dd}/${mm}/${yyyy}`;
+
+    // Hindi page uses /hindi/ path
+    const langPath = lang === "hi" ? "/hindi" : "";
+    const url = `https://www.drikpanchang.com${langPath}/panchang/day-panchang.html?date=${dateStr}`;
 
     const res = await fetch(url, {
       headers: {
@@ -30,30 +40,19 @@ export async function GET(request: Request) {
 
     const panchangData: Record<string,string> = {};
 
-    // The main Panchang info is inside .panchang-detail divs
-    $(".panchang-detail").each((_, el) => {
-      const label = $(el).find(".panchang-label").text().trim();
-      const value = $(el).find(".panchang-value").text().trim();
-      if(label && value){
-        panchangData[label] = value;
+    // Scrape table rows
+    $(".panchang-table tr").each((_, el) => {
+      const key = $(el).find("th").text().trim();
+      const val = $(el).find("td").text().trim();
+      if(key && val){
+        panchangData[key] = val;
       }
     });
 
-    // If still empty, try the table rows
-    if(Object.keys(panchangData).length===0){
-      $("table tr").each((_, el) => {
-        const key = $(el).find("th").text().trim();
-        const val = $(el).find("td").text().trim();
-        if(key && val){
-          panchangData[key] = val;
-        }
-      });
-    }
-
     return new NextResponse(
       JSON.stringify({
-        date: dateParam,
-        city: "Delhi",
+        date: dateStr,
+        lang,
         panchang: panchangData
       }),
       { headers: CORS_HEADERS }
