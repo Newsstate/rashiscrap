@@ -9,7 +9,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type"
 };
 
-// Map zodiac slugs to Drik Panchang URLs
+// Zodiac slugs for Drik Panchang
 const ZODIAC_URLS: Record<string, string> = {
   aries: "mesha-rashi",
   taurus: "vrishabha-rashi",
@@ -39,11 +39,9 @@ export async function GET(request: Request) {
       );
     }
 
-    // Build Drik Panchang URL
-    const baseUrl = "https://www.drikpanchang.com/astrology/prediction";
     const rashiSlug = ZODIAC_URLS[sign];
     const langPath = lang === "hi" ? "/hindi" : "";
-    const url = `${baseUrl}/${rashiSlug}/${rashiSlug}-daily-rashiphal${langPath}.html?prediction-day=${day}`;
+    const url = `https://www.drikpanchang.com/astrology/prediction/${rashiSlug}/${rashiSlug}-daily-rashiphal${langPath}.html?prediction-day=${day}`;
 
     const res = await fetch(url, {
       headers: {
@@ -51,10 +49,6 @@ export async function GET(request: Request) {
       },
       cache: "no-store"
     });
-
-    if (!res.ok) {
-      throw new Error("Failed to fetch horoscope");
-    }
 
     const html = await res.text();
     const $ = cheerio.load(html);
@@ -76,9 +70,9 @@ export async function GET(request: Request) {
 
     return new NextResponse(
       JSON.stringify({
-        sign: sign,
-        day: day,
-        lang: lang,
+        sign,
+        day,
+        lang,
         date: new Date().toLocaleDateString("en-IN", {
           day: "numeric",
           month: "long",
