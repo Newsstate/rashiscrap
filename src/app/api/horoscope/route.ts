@@ -41,7 +41,7 @@ export async function GET(request: Request) {
 
     const rashiSlug = ZODIAC_URLS[sign];
     const langPath = lang === "hi" ? "/hindi" : "";
-    const url = `https://www.drikpanchang.com/astrology/prediction/${rashiSlug}/${rashiSlug}-daily-rashiphal${langPath}.html?prediction-day=${day}`;
+    const url = `https://www.drikpanchang.com/astrology/prediction/${rashiSlug}/${rashiSlug}-daily-rashiphal${langPath}.html?prediction-day=${day}-&lang=hi&ck=1`;
 
     const res = await fetch(url, {
       headers: {
