@@ -12,25 +12,33 @@ const CORS_HEADERS = {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const dateParam = searchParams.get("date"); // Expects YYYY-MM-DD
-    const lang = (searchParams.get("lang") || "en").toLowerCase();
-
-    // 1. Date Formatting: Convert YYYY-MM-DD to DD/MM/YYYY for Drik Panchang
+    
+    // 1. Get Parameters
+    // Astrosage uses D-M-YYYY (e.g., 5-1-2026)
+    const dateParam = searchParams.get("date"); 
+    const lang = searchParams.get("lang") === "hi" ? "hi" : "en";
+    
     let formattedDate = "";
     if (dateParam && dateParam.includes("-")) {
-      const [y, m, d] = dateParam.split("-");
-      formattedDate = `${d}/${m}/${y}`;
+      // If user sends YYYY-MM-DD, convert to D-M-YYYY
+      const parts = dateParam.split("-");
+      if (parts[0].length === 4) {
+         formattedDate = `${parseInt(parts[2])}-${parseInt(parts[1])}-${parts[0]}`;
+      } else {
+         formattedDate = dateParam;
+      }
     } else {
       const now = new Date();
-      formattedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+      formattedDate = `${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`;
     }
 
-    const langPath = lang === "hi" ? "/hindi" : "";
-    const url = `https://www.drikpanchang.com${langPath}/panchang/day-panchang.html?date=${formattedDate}`;
+    // 2. Construct URL (Astrosage specific)
+    const url = `https://panchang.astrosage.com/panchang/aajkapanchang?date=${formattedDate}&language=${lang}`;
 
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": lang === "hi" ? "hi-IN,hi;q=0.9" : "en-US,en;q=0.9"
       },
       cache: "no-store",
     });
@@ -41,30 +49,23 @@ export async function GET(request: Request) {
 
     const rawData: Record<string, string> = {};
 
-    // 2. Multi-Column Scraper Logic
-    // This finds every row and checks if it has 2 cells (Key-Value) or 4 cells (Key-Value-Key-Value)
-    const rows = doc.querySelectorAll("tr");
+    // 3. Astrosage Scraper Logic
+    // Astrosage Panchang items are usually in .ui-grid-a or table rows
+    const pItems = doc.querySelectorAll(".ui-grid-a, .ui-block-a, tr");
     
-    rows.forEach((row) => {
-      const cells = row.querySelectorAll("td, th");
-      
-      if (cells.length >= 2) {
-        // First pair in the row
-        const key1 = cells[0].textContent?.trim().replace(/[:.]/g, "") || "";
-        const val1 = cells[1].textContent?.trim() || "";
-        if (key1) rawData[key1] = val1;
-      }
-      
-      if (cells.length >= 4) {
-        // Second pair in the same row (found in the 4-column layout)
-        const key2 = cells[2].textContent?.trim().replace(/[:.]/g, "") || "";
-        const val2 = cells[3].textContent?.trim() || "";
-        if (key2) rawData[key2] = val2;
+    pItems.forEach((item) => {
+      // Logic for grid-based layout (Key in block-a, Value in block-b)
+      const keyEl = item.querySelector(".ui-block-a") || item.querySelector("td:first-child") || item.querySelector("th");
+      const valEl = item.querySelector(".ui-block-b") || item.querySelector("td:last-child");
+
+      if (keyEl && valEl) {
+        const key = keyEl.textContent?.trim().replace(/[:.]/g, "") || "";
+        const val = valEl.textContent?.trim() || "";
+        if (key) rawData[key] = val;
       }
     });
 
-    // 3. Robust Data Mapping (Normalization)
-    // Helper to find value regardless of slight variations in naming
+    // 4. Normalization Helper
     const find = (en: string, hi: string) => {
       const entry = Object.entries(rawData).find(([k]) => 
         k.toLowerCase().includes(en.toLowerCase()) || k.includes(hi)
@@ -72,12 +73,8 @@ export async function GET(request: Request) {
       return entry ? entry[1] : "N/A";
     };
 
-    // Extracting Month names specifically from the "चन्द्रमास" or "Month" fields
-    const purnimanta = find("Purnimanta", "पूर्णिमान्त");
-    const amanta = find("Amanta", "अमान्त");
-
     const panchang = {
-      weekday: find("Weekday", "वार"),
+      weekday: find("Day", "वार"),
       sunrise: find("Sunrise", "सूर्योदय"),
       sunset: find("Sunset", "सूर्यास्त"),
       tithi: {
@@ -87,18 +84,18 @@ export async function GET(request: Request) {
         name: find("Nakshatra", "नक्षत्र"),
       },
       paksha: find("Paksha", "पक्ष"),
-      moonsign: find("Moon Sign", "चन्द्र राशि"),
+      moonsign: find("Moon", "चन्द्र राशि"),
       sunsign: find("Sun Sign", "सूर्य राशि"),
-      vikram_samvat: find("Vikram Samvat", "विक्रम संवत"),
-      shaka_samvat: find("Shaka Samvat", "शक संवत"),
+      vikram_samvat: find("Vikram", "विक्रम संवत"),
+      shaka_samvat: find("Shaka", "शक संवत"),
       month: {
-        purnimanta: purnimanta !== "N/A" ? purnimanta : find("Month", "चन्द्रमास"),
-        amanta: amanta
+        purnimanta: find("Purnimanta", "पूर्णिमान्त"),
+        amanta: find("Amanta", "अमान्त")
       }
     };
 
     return NextResponse.json(
-      { success: true, date: formattedDate, lang, panchang },
+      { success: true, source: "Astrosage", date: formattedDate, lang, panchang },
       { headers: CORS_HEADERS }
     );
 
