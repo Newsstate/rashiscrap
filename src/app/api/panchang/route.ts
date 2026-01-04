@@ -12,14 +12,17 @@ const CORS_HEADERS = {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const dateParam = searchParams.get("date"); // Expecting YYYY-MM-DD
+    const dateParam = searchParams.get("date"); 
     const lang = (searchParams.get("lang") || "en").toLowerCase();
 
-    // Drik Panchang uses DD/MM/YYYY in their query param
-    let formattedDate = dateParam;
+    // 1. Format Date correctly for Drik Panchang (DD/MM/YYYY)
+    let formattedDate = "";
     if (dateParam && dateParam.includes("-")) {
         const [y, m, d] = dateParam.split("-");
         formattedDate = `${d}/${m}/${y}`;
+    } else {
+        const now = new Date();
+        formattedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
     }
 
     const langPath = lang === "hi" ? "/hindi" : "";
@@ -27,7 +30,7 @@ export async function GET(request: Request) {
 
     const res = await fetch(url, {
       headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36" 
       },
       cache: "no-store",
     });
@@ -36,21 +39,32 @@ export async function GET(request: Request) {
     const dom = new JSDOM(html);
     const doc = dom.window.document;
 
-    // We collect raw data first
     const rawPanchang: Record<string, string> = {};
-    doc.querySelectorAll("table.panchang_table tr").forEach((row) => {
-      const th = row.querySelector("th")?.textContent?.trim();
-      const td = row.querySelector("td")?.textContent?.trim();
-      if (th && td) {
-          // Remove colons from headers to make matching easier
-          const key = th.replace(":", "");
-          rawPanchang[key] = td;
+
+    // 2. NEW SELECTORS: Drik Panchang uses dpPanchangTable or key/value spans
+    const rows = doc.querySelectorAll(".dpPanchangTable .dpPanchangRow, tr");
+    
+    rows.forEach((row) => {
+      const keyEl = row.querySelector(".dpPanchangKey, th");
+      const valEl = row.querySelector(".dpPanchangValue, td");
+      
+      if (keyEl && valEl) {
+          // Clean the key: remove colons, dots, and extra spaces
+          const key = keyEl.textContent?.replace(/[:.]/g, "").trim() || "";
+          const value = valEl.textContent?.trim() || "";
+          rawPanchang[key] = value;
       }
     });
 
-    // NORMALIZATION: Map Hindi or English keys to standard frontend keys
-    // This ensures your frontend code (data.sunrise) never breaks.
-    const getVal = (enKey: string, hiKey: string) => rawPanchang[enKey] || rawPanchang[hiKey] || "N/A";
+    // 3. Robust Helper: Check if key exists anywhere in the string
+    const getVal = (enKey: string, hiKey: string) => {
+        // Search the rawPanchang keys for a partial match
+        const foundKey = Object.keys(rawPanchang).find(k => 
+            k.toLowerCase().includes(enKey.toLowerCase()) || 
+            k.includes(hiKey)
+        );
+        return foundKey ? rawPanchang[foundKey] : "N/A";
+    };
 
     const normalizedData = {
       date: formattedDate,
@@ -65,8 +79,8 @@ export async function GET(request: Request) {
       vikram_samvat: getVal("Vikram Samvat", "विक्रम संवत"),
       shaka_samvat: getVal("Shaka Samvat", "शक संवत"),
       month: {
-          amanta: getVal("Amanta Month", "अमान्त महीना"),
-          purnimanta: getVal("Purnimanta Month", "पूर्णिमान्त महीना")
+          amanta: getVal("Amanta", "अमान्त"),
+          purnimanta: getVal("Purnimanta", "पूर्णिमान्त")
       }
     };
 
