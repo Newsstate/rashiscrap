@@ -11,73 +11,101 @@ const CORS_HEADERS = {
 
 export async function GET(request: Request) {
   try {
-    // ... date and lang logic remains the same ...
+    const { searchParams } = new URL(request.url);
+    const dateParam = searchParams.get("date"); // Expects YYYY-MM-DD
+    const lang = (searchParams.get("lang") || "en").toLowerCase();
+
+    // 1. Date Formatting: Convert YYYY-MM-DD to DD/MM/YYYY for Drik Panchang
+    let formattedDate = "";
+    if (dateParam && dateParam.includes("-")) {
+      const [y, m, d] = dateParam.split("-");
+      formattedDate = `${d}/${m}/${y}`;
+    } else {
+      const now = new Date();
+      formattedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+    }
+
+    const langPath = lang === "hi" ? "/hindi" : "";
+    const url = `https://www.drikpanchang.com${langPath}/panchang/day-panchang.html?date=${formattedDate}`;
+
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      cache: "no-store",
+    });
 
     const html = await res.text();
     const dom = new JSDOM(html);
     const doc = dom.window.document;
 
-    const rawPanchang: Record<string, string> = {};
+    const rawData: Record<string, string> = {};
 
-    // 1. Target all table cells that contain keys and values
-    // Drik Panchang often uses classes like .dpPanchangKey and .dpPanchangValue
-    // or standard table cells. We will iterate through all cells to find pairs.
-    const cells = doc.querySelectorAll(".dpPanchangRow td, .panchang_table td, tr td");
+    // 2. Multi-Column Scraper Logic
+    // This finds every row and checks if it has 2 cells (Key-Value) or 4 cells (Key-Value-Key-Value)
+    const rows = doc.querySelectorAll("tr");
     
-    let currentKey = "";
-    cells.forEach((cell) => {
-      // Check if the cell acts as a label (usually contains a span or specific class)
-      const isKey = cell.classList.contains('dpPanchangKey') || cell.querySelector('span') || cell.tagName === 'TH';
-      const text = cell.textContent?.trim().replace(/[:.]/g, "") || "";
-
-      if (text && (cell.classList.contains('dpPanchangKey') || cell.getAttribute('width') === '20%')) {
-        currentKey = text;
-      } else if (currentKey && text) {
-        // If we have a key saved, this next cell is likely the value
-        rawPanchang[currentKey] = text;
-        currentKey = ""; // Reset for next pair
+    rows.forEach((row) => {
+      const cells = row.querySelectorAll("td, th");
+      
+      if (cells.length >= 2) {
+        // First pair in the row
+        const key1 = cells[0].textContent?.trim().replace(/[:.]/g, "") || "";
+        const val1 = cells[1].textContent?.trim() || "";
+        if (key1) rawData[key1] = val1;
+      }
+      
+      if (cells.length >= 4) {
+        // Second pair in the same row (found in the 4-column layout)
+        const key2 = cells[2].textContent?.trim().replace(/[:.]/g, "") || "";
+        const val2 = cells[3].textContent?.trim() || "";
+        if (key2) rawData[key2] = val2;
       }
     });
 
-    // 2. Backup: If the specific class approach fails, use the index approach
-    if (Object.keys(rawPanchang).length < 5) {
-      doc.querySelectorAll("tr").forEach(row => {
-        const tds = row.querySelectorAll("td");
-        if (tds.length >= 2) {
-          // Handles [Key][Value]
-          rawPanchang[tds[0].textContent?.trim().replace(":", "") || ""] = tds[1].textContent?.trim() || "";
-        }
-        if (tds.length >= 4) {
-          // Handles [Key][Value][Key][Value] structure seen in your image
-          rawPanchang[tds[2].textContent?.trim().replace(":", "") || ""] = tds[3].textContent?.trim() || "";
-        }
-      });
-    }
-
-    // 3. Normalization (Mapping the Hindi keys from your image)
-    const getVal = (enKey: string, hiKey: string) => {
-      return rawPanchang[enKey] || rawPanchang[hiKey] || "N/A";
+    // 3. Robust Data Mapping (Normalization)
+    // Helper to find value regardless of slight variations in naming
+    const find = (en: string, hi: string) => {
+      const entry = Object.entries(rawData).find(([k]) => 
+        k.toLowerCase().includes(en.toLowerCase()) || k.includes(hi)
+      );
+      return entry ? entry[1] : "N/A";
     };
 
-    const normalizedData = {
-      weekday: getVal("Weekday", "वार"),
-      sunrise: getVal("Sunrise", "सूर्योदय"),
-      sunset: getVal("Sunset", "सूर्यास्त"),
-      tithi: { name: getVal("Tithi", "तिथि"), ends: "" },
-      nakshatra: { name: getVal("Nakshatra", "नक्षत्र"), ends: "" },
-      paksha: getVal("Paksha", "पक्ष"),
-      moonsign: getVal("Moon Sign", "चन्द्र राशि"),
-      sunsign: getVal("Sun Sign", "सूर्य राशि"),
-      vikram_samvat: getVal("Vikram Samvat", "विक्रम संवत"),
+    // Extracting Month names specifically from the "चन्द्रमास" or "Month" fields
+    const purnimanta = find("Purnimanta", "पूर्णिमान्त");
+    const amanta = find("Amanta", "अमान्त");
+
+    const panchang = {
+      weekday: find("Weekday", "वार"),
+      sunrise: find("Sunrise", "सूर्योदय"),
+      sunset: find("Sunset", "सूर्यास्त"),
+      tithi: {
+        name: find("Tithi", "तिथि"),
+      },
+      nakshatra: {
+        name: find("Nakshatra", "नक्षत्र"),
+      },
+      paksha: find("Paksha", "पक्ष"),
+      moonsign: find("Moon Sign", "चन्द्र राशि"),
+      sunsign: find("Sun Sign", "सूर्य राशि"),
+      vikram_samvat: find("Vikram Samvat", "विक्रम संवत"),
+      shaka_samvat: find("Shaka Samvat", "शक संवत"),
       month: {
-        amanta: getVal("Amanta", "अमान्त"), // Based on image "पौष - अमान्त"
-        purnimanta: getVal("Purnimanta", "पौष - पूर्णिमान्त")
+        purnimanta: purnimanta !== "N/A" ? purnimanta : find("Month", "चन्द्रमास"),
+        amanta: amanta
       }
     };
 
-    return NextResponse.json({ success: true, ...normalizedData }, { headers: CORS_HEADERS });
+    return NextResponse.json(
+      { success: true, date: formattedDate, lang, panchang },
+      { headers: CORS_HEADERS }
+    );
 
-  } catch (err) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500, headers: CORS_HEADERS });
+  } catch (err: any) {
+    return NextResponse.json(
+      { success: false, error: err.message },
+      { status: 500, headers: CORS_HEADERS }
+    );
   }
 }
