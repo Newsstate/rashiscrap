@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { JSDOM } from "jsdom";
 
 export const runtime = "nodejs";
+export const revalidate = 1800; // cache 30 min
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -12,13 +13,11 @@ const CORS_HEADERS = {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const dateParam = searchParams.get("date") || "";
-    const lang = (searchParams.get("language") || "hi").toLowerCase();
+    const date = searchParams.get("date") || "5-1-2026";
+    const language = searchParams.get("language") || "hi";
+    const lid = searchParams.get("lid") || "1261481";
 
-    const baseUrl = "https://panchang.astrosage.com/panchang/aajkapanchang";
-    const url = `${baseUrl}?date=${encodeURIComponent(
-      dateParam
-    )}&language=${encodeURIComponent(lang)}&lid=1261481`;
+    const url = `https://panchang.astrosage.com/panchang/aajkapanchang?date=${date}&language=${language}&lid=${lid}`;
 
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
@@ -27,16 +26,27 @@ export async function GET(request: Request) {
 
     const html = await res.text();
     const dom = new JSDOM(html);
-    const doc = dom.window.document;
+    const document = dom.window.document;
 
-    const data: Record<string, string> = {};
+    /* ---------- PAGE TITLE ---------- */
+    const title =
+      document.querySelector(".main-title h2")?.textContent?.trim() || "";
 
-    // try extracting common table rows
-    doc.querySelectorAll("table tr").forEach((row) => {
-      const th = row.querySelector("th")?.textContent?.trim();
-      const td = row.querySelector("td")?.textContent?.trim();
-      if (th && td) {
-        data[th] = td;
+    /* ---------- PANCHANG DATA ---------- */
+    const panchang: Record<string, string> = {};
+
+    document.querySelectorAll(".pan-row").forEach((row) => {
+      const label = row
+        .querySelector(".col-xs-5 b")
+        ?.textContent?.trim();
+
+      const value = row
+        .querySelector(".col-xs-7")
+        ?.textContent?.replace(/\s+/g, " ")
+        .trim();
+
+      if (label && value) {
+        panchang[label] = value;
       }
     });
 
@@ -44,16 +54,17 @@ export async function GET(request: Request) {
       {
         success: true,
         source: "astrosage",
-        date: dateParam,
-        language: lang,
-        panchang: data
+        title,
+        date,
+        language,
+        panchang,
       },
       { headers: CORS_HEADERS }
     );
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     return NextResponse.json(
-      { success: false, error: "Server error" },
+      { success: false, error: "Failed to fetch Panchang" },
       { status: 500, headers: CORS_HEADERS }
     );
   }
